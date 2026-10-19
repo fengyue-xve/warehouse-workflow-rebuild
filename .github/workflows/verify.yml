@@ -1,0 +1,37 @@
+name: Verify public demo
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: java-app/pom.xml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: fastapi-service/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+      - run: python -m pip install -r fastapi-service/requirements.txt
+      - run: npm ci
+        working-directory: web-app
+      - run: python scripts/verify.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-evidence
+          path: |
+            artifacts/e2e-result.json
+            java-app/target/surefire-reports/

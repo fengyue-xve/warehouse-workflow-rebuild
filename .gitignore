@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+**/target/
+**/node_modules/
+**/dist/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+*.pyc
+*.log
+runtime/
+artifacts/
+.venv/

@@ -1,0 +1,22 @@
+server:
+  address: 127.0.0.1
+  port: ${JAVA_PORT:18080}
+spring:
+  datasource:
+    url: ${DEMO_DB_URL:jdbc:h2:file:./runtime/warehouse;DB_CLOSE_ON_EXIT=FALSE}
+    username: sa
+    password: ''
+  sql:
+    init:
+      mode: always
+  jackson:
+    time-zone: Asia/Shanghai
+demo:
+  business-date: ${DEMO_BUSINESS_DATE:2026-10-20}
+  python-url: ${PYTHON_URL:http://127.0.0.1:18081}
+  service-key: ${DEMO_SERVICE_KEY:local-synthetic-demo-service}
+  jwt-secret: ${DEMO_JWT_SECRET:synthetic-local-demo-signing-key-change-before-any-deployment}
+logging:
+  level:
+    root: WARN
+    dev.portfolio: INFO
