@@ -127,8 +127,15 @@ def main():
         ready = api("/api/readiness", token=operator)
         check("last attempt and successful fact remain distinct", ready["ready"] and ready["lastAttempt"]["status"] == "FAILED" and ready["lastSuccessfulRun"]["runId"] == recovered["runId"])
         check("CSV is derived from actual inventory", b"DEMO-CUP-01" in api("/api/reconciliation.csv", token=viewer))
-        fallback = api("/api/chat", {"message": "确认同步并执行"}, operator)
+        fallback = api("/api/chat", {"message": "请解释目前的数据核验情况"}, operator)
         check("offline model boundary is explicit", fallback["stopReason"] == "model_not_configured")
+        intercepted = api("/api/chat", {"message": "确认同步并执行"}, operator)
+        card = intercepted["previewCard"]
+        check("sensitive intent obtains read-only SHA256 preview with zero model calls",
+              intercepted["stopReason"] == "human_confirmation_required" and intercepted["routing"]["modelCalls"] == 0
+              and len(card["preview"]["sourceDigest"]) == 64 and card["canConfirm"] and api("/api/inventory", token=operator) == after)
+        viewer_card = api("/api/chat", {"message": "更新库存"}, viewer)["previewCard"]
+        check("viewer preview never receives confirmation credential", not viewer_card["canConfirm"] and "previewToken" not in viewer_card["preview"])
         check("audit records committed business changes", any(e["action"] == "SNAPSHOT_COMMITTED" for e in api("/api/audit", token=viewer)))
         p = api("/api/sync/preview", {"scenario": "normal"}, operator)
         python_process.terminate(); python_process.wait(timeout=15); processes.remove(python_process)
@@ -140,6 +147,15 @@ def main():
         processes.remove(java)
         java = start_java(); wait_ready(base)
         check("H2 data survives a real process restart", api("/api/inventory", token=operator) == after)
+        api("/api/demo/reset", {"confirmed": True}, viewer, 403); checks.append("viewer cannot reset demo")
+        old = api("/api/sync/preview-read", {}, operator)
+        reset = api("/api/demo/reset", {"confirmed": True}, operator)
+        check("reset restores baseline, preserves audit and advances revision",
+              next(i for i in api("/api/inventory", token=operator) if i["sku"] == "DEMO-CUP-01")["quantity"] == 80
+              and not api("/api/runs", token=operator)
+              and any(e["action"] == "SNAPSHOT_COMMITTED" for e in api("/api/audit", token=viewer)))
+        stale = api("/api/sync/execute", command(old["preview"]), operator)
+        check("old assistant card invalid after reset", stale["status"] == "FAILED" and stale["errorCode"] == "STALE_PREVIEW")
         with opener.open(base + "/", timeout=3) as response:
             check("built Vue app is served by Java", b"/assets/" in response.read())
         result = {"status": "passed", "checks": checks, "count": len(checks),

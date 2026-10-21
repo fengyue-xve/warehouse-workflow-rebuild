@@ -136,11 +136,34 @@ async def complete(messages: list[dict]) -> dict:
         return response.json()["choices"][0]["message"]
 
 
-async def model_chat(message: str, authorization: str) -> dict:
+def routing(calls: int = 0) -> dict:
+    return {"modelCalls": calls, "maxRounds": 5, "tokenUsage": 0 if calls == 0 else None}
+
+
+async def sensitive_preview(authorization: str) -> dict:
+    # This branch is outside the model loop. The credential never enters a prompt,
+    # a model tool result, or a trace. Java decides whether the user may confirm.
+    try:
+        async with httpx.AsyncClient(timeout=8, trust_env=False, follow_redirects=False) as client:
+            response = await client.post(JAVA_URL + "/api/sync/preview-read", json={}, headers={"Authorization": authorization})
+            response.raise_for_status()
+            card = response.json()
+        if card.get("kind") != "sync_preview" or not re.fullmatch(r"[0-9a-f]{64}", card.get("preview", {}).get("sourceDigest", "")):
+            raise ValueError("invalid_preview_card")
+        return {"mode": "intercepted", "reply": "已拦截直接写入，只完成只读预检。请核对差异并带入操作员确认区，勾选后才可执行；当前库存未改变。",
+                "previewCard": card, "trace": [{"tool": "read_only_sync_preview", "ok": True}], "stopReason": "human_confirmation_required", "routing": routing()}
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {"mode": "intercepted", "reply": "已拦截直接写入，但预检暂不可用。请检查来源服务或人工进入工作台；没有更新库存。",
+                "trace": [], "stopReason": "preview_unavailable", "routing": routing()}
+
+
+async def model_chat(message: str, authorization: str, stats: dict | None = None) -> dict:
+    stats = stats if stats is not None else {"modelCalls": 0}
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": message}]
     trace = []
     evidence = []
     for _ in range(5):
+        stats["modelCalls"] += 1
         response = await complete(messages)
         calls = response.get("tool_calls") or []
         if not calls:
@@ -173,16 +196,21 @@ async def chat(body: ChatRequest, authorization: str = Header(default="")):
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "User session required")
     message = body.message.strip()
+    if re.search(r"执行同步|同步(?:一下)?库存|更新库存|刷新库存|确认同步|重跑(?:库存|同步)?|重试同步", message):
+        return await sensitive_preview(authorization)
     name, args = route(message)
     if name:
         data = await call_tool(name, args, authorization)
         return {"mode": "rule", "reply": describe(name, data), "evidence": [{"tool": name, "data": data}],
-                "trace": [{"tool": name, "ok": not bool(data.get("error"))}], "stopReason": "rule_match"}
+                "trace": [{"tool": name, "ok": not bool(data.get("error"))}], "stopReason": "rule_match", "routing": routing()}
     if not os.getenv("LLM_API_KEY"):
         return {"mode": "fallback", "reply": "当前未启用真实模型。可用：查询库存、查询商品、任务记录、数据就绪。同步与重跑请在工作台预检并确认。",
-                "trace": [], "stopReason": "model_not_configured"}
+                "trace": [], "stopReason": "model_not_configured", "routing": routing()}
+    stats = {"modelCalls": 0}
     try:
-        return await model_chat(message, authorization)
+        result = await model_chat(message, authorization, stats)
+        result["routing"] = routing(stats["modelCalls"])
+        return result
     except (httpx.HTTPError, KeyError, ValueError, TypeError):
         return {"mode": "fallback", "reply": "模型服务暂不可用。可继续使用查询库存、任务记录等固定命令；没有执行写操作。",
-                "trace": [], "stopReason": "model_error"}
+                "trace": [], "stopReason": "model_error", "routing": routing(stats["modelCalls"])}

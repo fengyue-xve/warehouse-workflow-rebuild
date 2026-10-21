@@ -18,7 +18,8 @@
         → 成功：快照 + 审计 + 结果同一事务提交
         → 失败：业务数据不变，失败记录保留，由人工核对后重试
 
-查询助手 → 规则命令 / 可选模型 → 只读工具 → Java 鉴权并查询实际数据
+查询助手 → 固定命令0 Token / 普通问题最多5轮模型只读工具
+        → 敏感写意图拦截 → 只读差异+SHA-256卡片 → 带入未勾选的人工预检区
 ```
 
 ## 已实现的业务能力
@@ -31,6 +32,8 @@
 - Java 与 Python 两侧只读工具白名单；`viewer` 可查，`operator` 才能确认同步。
 - Vue 工作台、实际库存核对 CSV、规则查询与可选真实模型的5轮工具循环。
 - 可选定时入口使用普通任务键；不携带重试/刷新语义，默认关闭。
+
+问答拦截、预检卡片与重置的代码、权限和最新验证见 [Agent升级说明](docs/08-agent-upgrade.md)。
 
 ## 本地运行
 
@@ -53,7 +56,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start.ps1
 
 打开 [本地工作台](http://127.0.0.1:18080)。账号 `operator` / `viewer`，本地演示口令均为 `demo-only`。演示业务日固定为 `2026-10-20`；页面展示的是合成快照，不是真实当天库存。
 
-停止：`powershell -File scripts/stop.ps1`。数据库保存在 `runtime/warehouse.mv.db`；停止或重新构建不会清空数据。若希望重新演示初始状态，可以停止后改用一个新的 `DEMO_DB_URL` 文件路径，无需删除已有数据。
+停止：`powershell -File scripts/stop.ps1`。数据库保存在 `runtime/warehouse.mv.db`；停止或重新构建不会清空数据。需要重录时，可由operator点击顶部“重置演示数据”：恢复种子、保留审计、递增版本使旧预检失效。
 
 Linux/macOS 使用两个终端（先完成同样的依赖安装与构建）：
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -207,5 +208,42 @@ class WorkflowTest {
         when(mock.preview(any(),eq("normal"))).thenReturn(Map.of("previewToken","synthetic-preview"));
         new DemoScheduler(mock).run();
         verify(mock).execute(any(),eq("synthetic-preview"),eq("NORMAL"),isNull(),anyString(),eq(true));
+    }
+
+    @Test void assistantPreviewIsReadOnlyAndCredentialBoundToOperator() throws Exception {
+        var card=postJson("/api/sync/preview-read",Map.of(),operator,200);
+        assertTrue(card.path("canConfirm").asBoolean());
+        var preview=card.path("preview");
+        assertTrue(preview.path("sourceDigest").asText().matches("[0-9a-f]{64}"));
+        assertEquals(preview.path("sourceDigest").asText(),auth.verify(preview.path("previewToken").asText(),"sync-preview").get("digest"));
+        assertEquals(0,count("sync_run")); assertEquals(80,quantity("DEMO-CUP-01"));
+    }
+    @Test void viewerPreviewHasNoCredentialAndCannotReset() throws Exception {
+        var card=postJson("/api/sync/preview-read",Map.of(),viewer,200);
+        assertFalse(card.path("canConfirm").asBoolean()); assertFalse(card.path("preview").has("previewToken"));
+        postJson("/api/demo/reset",Map.of("confirmed",true),viewer,403);
+        postJson("/api/demo/reset",Map.of("confirmed",false),operator,422);
+        assertEquals(0,count("sync_run"));
+    }
+    @Test void resetRestoresSeedPreservesAuditAndInvalidatesOldPreview() throws Exception {
+        var old=preview("normal"); execute(old,"NORMAL",null);
+        int history=count("audit_event");
+        var reset=postJson("/api/demo/reset",Map.of("confirmed",true),operator,200);
+        assertEquals(2,reset.path("revision").asInt()); assertEquals(80,quantity("DEMO-CUP-01"));
+        assertEquals(0,count("sync_run")); assertEquals(3,count("baseline_sample")); assertTrue(count("audit_event")>history);
+        mvc.perform(get("/api/audit").header("Authorization",viewer)).andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("DEMO_BASELINE_RESET")));
+        var stale=execute(old,"NORMAL",null);
+        assertEquals("FAILED",stale.path("status").asText()); assertEquals("STALE_PREVIEW",stale.path("errorCode").asText());
+        assertEquals(80,quantity("DEMO-CUP-01"));
+    }
+    @Test void resetIsOneDmlTransactionWhenSeedInsertionFails() throws Exception {
+        execute(preview("normal"),"NORMAL",null);
+        db.execute("ALTER TABLE inventory ADD CONSTRAINT reject_demo_seed CHECK(source_name <> 'synthetic-seed')");
+        int history=count("audit_event");
+        try {
+            postJson("/api/demo/reset",Map.of("confirmed",true),operator,500);
+            assertEquals(100,quantity("DEMO-CUP-01")); assertEquals(1,count("sync_run")); assertEquals(history,count("audit_event"));
+        } finally { db.execute("ALTER TABLE inventory DROP CONSTRAINT reject_demo_seed"); }
     }
 }

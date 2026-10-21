@@ -24,6 +24,7 @@ public class Api {
     public record Execute(@NotBlank String previewToken,@NotBlank String mode,String parentRunId,@NotBlank @Size(max=240) String reason,boolean confirmed) {}
     public record ToolCall(Map<String,Object> args) {}
     public record Chat(@NotBlank @Size(max=2000) String message) {}
+    public record Reset(boolean confirmed) {}
 
     @GetMapping("/health") public Object health() { return Map.of("status","ok","synthetic",true,"businessDate",workflow.date()); }
     @PostMapping("/api/auth/login") public Object login(@Valid @RequestBody Login body) {
@@ -35,6 +36,14 @@ public class Api {
     @GetMapping("/api/runs/{id}") public Object run(HttpServletRequest r,@PathVariable String id) { auth.actor(r); return workflow.run(id); }
     @GetMapping("/api/audit") public Object audit(HttpServletRequest r) { auth.actor(r); return workflow.audit(); }
     @PostMapping("/api/sync/preview") public Object preview(HttpServletRequest r,@Valid @RequestBody Preview b) { return workflow.preview(auth.actor(r),b.scenario()); }
+    @PostMapping("/api/sync/preview-read") public Object previewCard(HttpServletRequest r,@RequestBody Map<String,Object> b) {
+        var actor=auth.actor(r);
+        if (!b.isEmpty()) throw new ApiError(422,"BAD_REQUEST","问答预检仅允许固定正常场景");
+        return workflow.previewCard(actor);
+    }
+    @PostMapping("/api/demo/reset") public Object reset(HttpServletRequest r,@RequestBody Reset body) {
+        return workflow.resetDemo(auth.actor(r),body.confirmed());
+    }
     @PostMapping("/api/sync/execute") public Object execute(HttpServletRequest r,@Valid @RequestBody Execute b) {
         return workflow.execute(auth.actor(r),b.previewToken(),b.mode(),b.parentRunId(),b.reason(),b.confirmed());
     }

@@ -1,0 +1,62 @@
+"""Real local UI: sensitive intent -> preview -> unchecked handoff -> execution -> reset."""
+import json
+from pathlib import Path
+from playwright.sync_api import sync_playwright, expect
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / 'artifacts/agent-upgrade-browser'
+OUT.mkdir(parents=True, exist_ok=True)
+checks, errors = [], []
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={'width':1440,'height':1100})
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.on('dialog', lambda d: d.accept())
+    page.goto('http://127.0.0.1:18080')
+    page.get_by_role('button',name='进入工作台').click()
+    page.locator('[data-test=reset-demo]').click()
+    expect(page.get_by_role('status')).to_contain_text('基线已恢复')
+    page.get_by_role('button',name='只读查询助手').click()
+    page.get_by_label('查询问题').fill('执行同步更新库存')
+    page.get_by_role('button',name='查询',exact=True).click()
+    card=page.locator('[data-test=assistant-preview-card]')
+    expect(card).to_contain_text('SHA-256')
+    expect(card).to_contain_text('80 → 100')
+    expect(page.locator('.message.assistant').last).to_contain_text('模型调用 0 / 5 轮')
+    checks.append('sensitive intent generates actual SHA256 diff with zero model calls')
+    page.screenshot(path=str(OUT/'preview-card.png'),full_page=True)
+    page.get_by_role('button',name='带入预检确认区').click()
+    expect(page.get_by_role('checkbox')).not_to_be_checked()
+    expect(page.get_by_role('button',name='确认执行',exact=True)).to_be_disabled()
+    checks.append('handoff requires fresh explicit human checkbox')
+    page.get_by_role('checkbox').check()
+    page.get_by_role('button',name='确认执行',exact=True).click()
+    expect(page.get_by_role('status')).to_contain_text('任务已完成')
+    expect(page.get_by_role('row').filter(has_text='DEMO-CUP-01')).to_contain_text('100')
+    checks.append('manual confirmation executes persisted update')
+    page.locator('[data-test=reset-demo]').click()
+    expect(page.get_by_role('status')).to_contain_text('基线已恢复')
+    expect(page.get_by_role('row').filter(has_text='DEMO-CUP-01')).to_contain_text('80')
+    page.get_by_text('查看最近的审计事件',exact=False).click()
+    expect(page.get_by_text('DEMO_BASELINE_RESET',exact=False).first).to_be_visible()
+    checks.append('topbar reset restores seed and visible retained audit')
+    page.set_viewport_size({'width':390,'height':844})
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.screenshot(path=str(OUT/'mobile.png'),full_page=True)
+    checks.append('mobile has no document overflow')
+    page.get_by_role('button',name='退出',exact=True).click()
+    page.get_by_label('演示身份').select_option('viewer')
+    page.get_by_role('button',name='进入工作台').click()
+    expect(page.locator('[data-test=reset-demo]')).to_have_count(0)
+    page.get_by_role('button',name='只读查询助手').click()
+    page.get_by_label('查询问题').fill('更新库存')
+    page.get_by_role('button',name='查询',exact=True).click()
+    expect(page.locator('[data-test=assistant-preview-card]')).to_contain_text('不获得确认凭证')
+    expect(page.get_by_role('button',name='带入预检确认区')).to_have_count(0)
+    checks.append('viewer receives no confirmation or reset controls')
+    assert not errors, errors
+    checks.append('no uncaught browser errors')
+    browser.close()
+result={'checks':checks,'passed':len(checks),'routeMocks':False}
+(OUT/'summary.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+print(json.dumps(result,ensure_ascii=False))

@@ -30,7 +30,7 @@ def test_exports_are_deterministic_synthetic_data(scenario):
     assert one.json()["synthetic"] is True
 
 
-@pytest.mark.parametrize("name,args", [("sync_tms", {}), ("generate_files", {}), ("../sync/execute", {}),
+@pytest.mark.parametrize("name,args", [("sync_tms", {}), ("generate_files", {}), ("../sync/execute", {}), ("reset_demo", {}), ("read_only_sync_preview", {}),
     ("query_inventory", {"force": True}), ("query_inventory", []), ("query_inventory", {"sku": 1})])
 def test_forbidden_calls_have_zero_http_requests(name, args):
     with patch.object(main.httpx, "AsyncClient") as transport:
@@ -52,7 +52,7 @@ def test_rule_queries_do_not_call_model():
 
 def test_missing_model_is_explicit_fallback(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
-    response = request("POST", "/agent/chat", json={"message": "确认同步并执行"},
+    response = request("POST", "/agent/chat", json={"message": "请解释库存快照的业务口径"},
         headers={"X-Service-Key": main.SERVICE_KEY, "Authorization": "Bearer synthetic"})
     assert response.json()["stopReason"] == "model_not_configured"
 

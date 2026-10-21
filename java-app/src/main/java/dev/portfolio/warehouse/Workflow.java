@@ -8,6 +8,9 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.sql.init.dependency.DependsOnDatabaseInitialization;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -47,6 +50,44 @@ public class Workflow {
     private long revision() { return db.queryForObject("SELECT revision FROM demo_meta WHERE id=1",Long.class); }
     private static ApiError bad(String code,String message) { return new ApiError(422,code,message); }
 
+    /** Read-only preview; viewers never receive a confirmation credential. Not a model tool. */
+    public synchronized Map<String,Object> previewCard(Auth.Actor actor) {
+        Map<String,Object> report;
+        if ("operator".equals(actor.role())) report = preview(actor,"normal");
+        else {
+            JsonNode payload=fetch("normal");
+            report=new LinkedHashMap<>(inspect(payload));
+            report.put("businessDate",date()); report.put("revision",revision());
+            report.put("sourceDigest",digest(payload)); report.put("expiresInSeconds",0);
+        }
+        return Map.of("kind","sync_preview","scenario","normal","canConfirm","operator".equals(actor.role()),"preview",report);
+    }
+
+    /** Synthetic H2 only. Preserve audit and advance revision so all old previews become stale. */
+    public synchronized Map<String,Object> resetDemo(Auth.Actor actor,boolean confirmed) {
+        auth.requireOperator(actor);
+        if (!confirmed) throw bad("RESET_CONFIRMATION_REQUIRED","请明确确认重置合成演示数据");
+        try (var connection=db.getDataSource().getConnection()) {
+            String url=connection.getMetaData().getURL();
+            if (!(url.startsWith("jdbc:h2:mem:") || url.startsWith("jdbc:h2:file:")))
+                throw new ApiError(403,"SYNTHETIC_H2_REQUIRED","只能重置本机合成H2演示库");
+        } catch (java.sql.SQLException error) { throw new IllegalStateException(error); }
+        if (db.queryForObject("SELECT COUNT(*) FROM sync_run WHERE status='RUNNING'",Long.class)>0)
+            throw new ApiError(409,"RUN_ACTIVE","请等待当前任务结束再重置");
+        long previous=revision();
+        tx.executeWithoutResult(status -> {
+            db.update("DELETE FROM inventory"); db.update("DELETE FROM sync_run");
+            db.update("DELETE FROM baseline_sample"); db.update("DELETE FROM catalog");
+            var connection=DataSourceUtils.getConnection(db.getDataSource());
+            try { ScriptUtils.executeSqlScript(connection,new ClassPathResource("data.sql")); }
+            finally { DataSourceUtils.releaseConnection(connection,db.getDataSource()); }
+            db.update("UPDATE demo_meta SET revision=? WHERE id=1",previous+1);
+            db.update("INSERT INTO audit_event(run_id,actor,action,occurred_at,detail_json) VALUES(NULL,?,?,?,?)",
+                    actor.name(),"DEMO_BASELINE_RESET",now(),json(Map.of("previousRevision",previous,"revision",previous+1)));
+        });
+        return Map.of("reset",true,"revision",previous+1,"auditPreserved",true);
+    }
+
     public synchronized Map<String,Object> preview(Auth.Actor actor,String scenario) {
         auth.requireOperator(actor);
         if (!SCENARIOS.contains(scenario)) throw bad("BAD_SCENARIO","请选择已定义的合成演示场景");
@@ -59,6 +100,7 @@ public class Workflow {
                 "revision",revision,"businessDate",date(),"previewId",previewId),300);
         Map<String,Object> result=new LinkedHashMap<>(report);
         result.put("previewToken",token); result.put("previewId",previewId);
+        result.put("sourceDigest",digest(payload));
         result.put("revision",revision); result.put("businessDate",date()); result.put("expiresInSeconds",300);
         return result;
     }
@@ -215,7 +257,7 @@ public class Workflow {
     }
     public List<Map<String,Object>> audit() {
         return db.query("SELECT * FROM audit_event ORDER BY id DESC LIMIT 60",(r,n)->Map.of("id",r.getLong("id"),
-                "runId",r.getString("run_id"),"actor",r.getString("actor"),"action",r.getString("action"),
+                "runId",Objects.toString(r.getString("run_id"),""),"actor",r.getString("actor"),"action",r.getString("action"),
                 "occurredAt",r.getString("occurred_at"),"detail",r.getString("detail_json")));
     }
     public Map<String,Object> readiness() {

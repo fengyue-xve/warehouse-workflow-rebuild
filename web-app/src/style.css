@@ -1958,3 +1958,6 @@ footer {
     font-size: 12px;
   }
 }
+
+.preview-card { padding:18px; margin-top:12px; border:1px solid #c9d9f4; border-radius:12px; background:#f3f7ff; }
+.preview-card .digest { overflow-wrap:anywhere; font:12px monospace; }

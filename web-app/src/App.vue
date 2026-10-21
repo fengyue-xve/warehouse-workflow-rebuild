@@ -55,6 +55,24 @@ async function ask() { if (!message.value.trim()) return; await work(async () =>
   const text = message.value.trim(); messages.value.push({ role: 'user', text }); message.value = ''
   const result = await api('/api/chat', { message: text }); messages.value.push({ role: 'assistant', ...result })
 }) }
+async function carryPreview(card) { await work(async () => {
+  if (!operator.value || !card.canConfirm || !card.preview?.previewToken) throw new Error('当前身份没有确认凭证，请使用 operator 核验。')
+  await refresh()
+  const parent = runs.value.find(run => run.status !== 'RUNNING')
+  scenario.value = 'normal'; mode.value = parent ? 'REFRESH' : 'NORMAL'; parentRunId.value = parent?.runId || ''
+  reason.value = '问答拦截后，人工核对预检差异并确认'
+  preview.value = card.preview; confirmed.value = false; tab.value = 'workflow'
+  notice.value = '已带入预检。请核对来源、模式和变更，再勾选人工确认；尚未执行。'
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}) }
+async function resetDemo() {
+  if (!window.confirm('仅重置本机合成库存、任务与参考样本；保留审计，所有旧预检凭证失效。继续？')) return
+  await work(async () => {
+    await api('/api/demo/reset', { confirmed: true }); invalidate(); messages.value = []
+    mode.value = 'NORMAL'; scenario.value = 'normal'; parentRunId.value = ''; tab.value = 'workflow'
+    await refresh(); notice.value = '演示基线已恢复；旧预检已失效，审计保留。'
+  })
+}
 async function download() { await work(async () => {
   const response = await fetch('/api/reconciliation.csv', { headers: { Authorization: `Bearer ${session.value.token}` } })
   if (!response.ok) throw new Error('核对表导出失败')
@@ -74,7 +92,7 @@ onMounted(() => { if (session.value) work(refresh) })
       <div class="sidebar-note"><span class="dot"></span> 独立公开演示<p>所有商品、数据与场景均为虚构。<br>不连接公司系统或真实飞书。</p><span class="sidebar-version">Workflow Rebuild · v1.0</span></div>
     </aside>
     <main>
-      <header class="topbar"><div class="breadcrumb"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"/></svg><span>作业空间</span><span class="crumb-divider">/</span><b>{{ tab === 'workflow' ? '库存同步与核对' : '只读查询助手' }}</b></div><div v-if="session" class="user"><span class="user-avatar">{{ operator ? 'OP' : 'VI' }}</span><div><strong>{{ session.username }}</strong><small>{{ operator ? '操作员' : '只读观察员' }}</small></div><button class="text-button logout" @click="logout">退出</button></div><span v-else class="environment"><span class="dot"></span> 本地沙箱</span></header>
+      <header class="topbar"><div class="breadcrumb"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1V10Z"/></svg><span>作业空间</span><span class="crumb-divider">/</span><b>{{ tab === 'workflow' ? '库存同步与核对' : '只读查询助手' }}</b></div><button v-if="operator" class="secondary" :disabled="busy" data-test="reset-demo" @click="resetDemo">重置演示数据</button><div v-if="session" class="user"><span class="user-avatar">{{ operator ? 'OP' : 'VI' }}</span><div><strong>{{ session.username }}</strong><small>{{ operator ? '操作员' : '只读观察员' }}</small></div><button class="text-button logout" @click="logout">退出</button></div><span v-else class="environment"><span class="dot"></span> 本地沙箱</span></header>
       <div class="page-content"><div class="page-heading"><div><span class="eyebrow">WAREHOUSE / OPERATIONS</span><h1>{{ tab === 'workflow' ? '库存同步与核对' : '只读查询助手' }}</h1><p>{{ tab === 'workflow' ? '核对来源、预检变更，让每次库存更新有据可查。' : '从业务表读取信息，让每个查询结论都有依据。' }}</p></div><span class="environment"><span class="dot"></span> 合成数据演示</span></div>
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
       <div v-if="notice" class="alert success" role="status">{{ notice }}</div>
@@ -119,8 +137,8 @@ onMounted(() => { if (session.value) work(refresh) })
         </template>
         <section v-else class="card assistant"><span class="eyebrow">EVIDENCE-BASED ASSISTANT</span><h2>查询助手</h2><p>固定查询命令直接读取业务工具；开放式问题仅在配置真实模型后启用。</p>
           <div class="quick"><button v-for="text in ['查询库存', '查询商品', '任务记录', '数据就绪']" :key="text" class="secondary" @click="message = text">{{ text }}</button></div>
-          <div v-if="!messages.length" class="chat-empty"><span class="chat-empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M7 10h9M7 14h6"/></svg></span><h3>从一个业务问题开始</h3><p>查询库存、商品或任务，展开工具证据核对每个结论。</p></div><article v-for="(item, i) in messages" :key="i" :class="['message', item.role]"><small>{{ item.role === 'user' ? '你' : ({ rule: '规则查询', model: '真实模型', fallback: '降级提示' }[item.mode]) }}</small><p>{{ item.text || item.reply }}</p>
-            <details v-if="item.evidence?.length"><summary>查看本次工具证据</summary><pre>{{ JSON.stringify(item.evidence, null, 2) }}</pre></details></article>
+          <div v-if="!messages.length" class="chat-empty"><span class="chat-empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M7 10h9M7 14h6"/></svg></span><h3>从一个业务问题开始</h3><p>查询库存、商品或任务，展开工具证据核对每个结论。</p></div><article v-for="(item, i) in messages" :key="i" :class="['message', item.role]"><small>{{ item.role === 'user' ? '你' : ({ rule: '规则查询', model: '真实模型', fallback: '降级提示', intercepted: '写意图已拦截' }[item.mode]) }}</small><p>{{ item.text || item.reply }}</p>
+            <p v-if="item.routing" class="footnote">模型调用 {{ item.routing.modelCalls }} / {{ item.routing.maxRounds }} 轮 · {{ item.routing.modelCalls === 0 ? '固定路由，0 Token' : '真实调用，Token用量未统计' }}</p><div v-if="item.previewCard" class="preview-card" data-test="assistant-preview-card"><h3>只读预检差异与凭证卡片</h3><p>业务日 {{ item.previewCard.preview.businessDate }} · 版本 {{ item.previewCard.preview.revision }}</p><p class="digest">SHA-256：{{ item.previewCard.preview.sourceDigest }}</p><p v-for="change in item.previewCard.preview.changes" :key="change.sku">{{ change.label }}：{{ change.before }} → {{ change.after }}</p><p v-if="!item.previewCard.preview.changes.length">数量没有变化，仍需人工核对日期与来源。</p><p>凭证有效 {{ item.previewCard.preview.expiresInSeconds }} 秒；尚未执行。</p><button v-if="item.previewCard.canConfirm && operator" :disabled="busy" @click="carryPreview(item.previewCard)">带入预检确认区</button><p v-else>viewer仅能核对差异，不获得确认凭证。</p></div><details v-if="item.evidence?.length"><summary>查看本次工具证据</summary><pre>{{ JSON.stringify(item.evidence, null, 2) }}</pre></details></article>
           <form class="chat-input" @submit.prevent="ask"><input v-model="message" maxlength="2000" aria-label="查询问题" placeholder="例如：查询库存 DEMO-CUP-01"><button :disabled="busy">查询</button></form>
           <p class="footnote">聊天中输入“确认同步”不会触发写入。实际执行只允许在操作员工作台进行。</p>
         </section>
