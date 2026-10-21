@@ -121,3 +121,5 @@ Java 21 / Spring Boot 3 / JDBC / JWT；FastAPI / HTTPX；Vue 3 / Vite；H2 文�
 - [实现来源与贡献边界](docs/05-provenance.md)
 
 代码借助 AI 协作完成。MIT License。
+
+界面布局参考与本轮视觉验收见 [界面说明](docs/06-interface-design.md)。

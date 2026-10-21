@@ -20,6 +20,8 @@ with sync_playwright() as p:
     page.get_by_role("button", name="进入工作台").click()
     expect(page.get_by_role("heading", name="库存核对", exact=True)).to_be_visible()
     checks.append("login and inventory render")
+    # Wait for the authenticated data refresh before inspecting existing tasks.
+    expect(page.get_by_role("button", name="预检来源与变更", exact=True)).to_be_enabled()
     # 已有任务时从最新终态刷新；新数据库则使用普通任务。
     refresh_buttons = page.get_by_role("button", name="人工刷新", exact=True)
     if refresh_buttons.count():
