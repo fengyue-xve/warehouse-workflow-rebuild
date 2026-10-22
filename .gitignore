@@ -12,3 +12,6 @@
 runtime/
 artifacts/
 .venv/
+
+# Local portfolio audit notes and learning plans
+docs/internal/
