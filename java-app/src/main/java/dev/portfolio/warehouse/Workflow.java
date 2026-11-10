@@ -137,6 +137,7 @@ public class Workflow {
         if (seen.size()!=stock.size()) reasons.add("源数据没有覆盖全部演示商品，缺失不等于库存为零");
         List<Map<String,Object>> samples=db.queryForList("SELECT row_count,total_units,origin FROM baseline_sample ORDER BY sample_order DESC LIMIT 7");
         double meanUnits=samples.stream().mapToLong(s->((Number)s.get("TOTAL_UNITS")).longValue()).average().orElse(0);
+        // 演示阈值 50%：仅用于合成夹具，让预检可观察；生产 BaselineGuard 为近 7 次窗口、±20% 与 max(均值×3, 150)。见 README「演示阈值与生产阈值」。
         if (samples.size()>=3 && meanUnits>0 && Math.abs(totalUnits-meanUnits)/meanUnits>0.50)
             reasons.add("库存总量相对参考样本偏离超过 50%，需人工核实源数据");
         Map<String,Object> report=new LinkedHashMap<>();
@@ -144,7 +145,7 @@ public class Workflow {
         report.put("changes",changes); report.put("sourceRowCount",rows.isArray()?rows.size():0);
         report.put("sourceTotalUnits",totalUnits); report.put("baselineMeanUnits",meanUnits);
         report.put("baselineSampleCount",samples.size()); report.put("baselineIncludesSyntheticReferences",samples.stream().anyMatch(s->s.get("ORIGIN").equals("FIXTURE")));
-        report.put("thresholdNote","演示阈值为总量偏离 50%；前三个参考样本为虚构夹具，不是生产历史");
+        report.put("thresholdNote","演示阈值为总量偏离 50%（合成夹具，不是生产历史）；生产 BaselineGuard 使用近 7 次窗口、±20% 与 max(均值×3, 150)，本演示不复刻该参数");
         return report;
     }
 
